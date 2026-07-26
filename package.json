@@ -33,8 +33,43 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && tsc -p tsconfig.electron.json",
+    "dist": "npm run build && electron-builder --win nsis portable",
     "lint": "tsc --noEmit",
     "preview": "vite preview"
+  },
+  "build": {
+    "appId": "com.wahyusiregar.docx2markdown",
+    "productName": "Docx2Markdown",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Docx2Markdown"
+    }
   },
   "dependencies": {
     "clsx": "^2.1.1",
@@ -55,6 +90,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
     "electron": "^34.0.0",
+    "electron-builder": "^26.15.3",
     "postcss": "^8.5.1",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.3",
