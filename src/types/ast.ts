@@ -2,7 +2,7 @@ export type ImageHandlingMode = 'none' | 'base64' | 'external';
 
 export type LineEnding = 'auto' | 'lf' | 'crlf';
 
-export type Dialect = 'gfm' | 'commonmark';
+
 
 export interface InlineNode {
   type: 'text' | 'bold' | 'italic' | 'strikethrough' | 'code' | 'link' | 'subscript' | 'superscript' | 'underline';

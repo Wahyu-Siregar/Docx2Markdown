@@ -1,6 +1,6 @@
 import JSZip from 'jszip';
 import { XMLParser } from 'fast-xml-parser';
-import {
+import type {
   DocumentAST,
   ASTNode,
   HeadingNode,
@@ -14,7 +14,7 @@ import {
   InlineNode,
   FootnoteNode,
   PageBreakNode,
-} from '../types/ast';
+} from '../types/ast.ts';
 
 interface Relationship {
   id: string;
@@ -32,6 +32,64 @@ interface StyleMap {
   };
 }
 
+// ── preserveOrder navigation helpers ────────────────────────────────
+// With preserveOrder: true, each XML element becomes:
+//   { "tagName": [ ...children... ], ":@": { "@_attr": "val" } }
+// Children arrays contain ordered nodes of potentially different tags.
+
+/** Find first node with `tag` in an ordered children array. */
+function poFind(arr: any[], tag: string): any | undefined {
+  if (!Array.isArray(arr)) return undefined;
+  return arr.find((n: any) => n && typeof n === 'object' && tag in n);
+}
+
+/** Find all nodes with `tag` in an ordered children array. */
+function poAll(arr: any[], tag: string): any[] {
+  if (!Array.isArray(arr)) return [];
+  return arr.filter((n: any) => n && typeof n === 'object' && tag in n);
+}
+
+/** Get attribute from a preserveOrder node's `:@` bag. */
+function poAttr(node: any, attr: string): string | undefined {
+  return node?.[':@']?.[attr];
+}
+
+/** Get `#text` content from a children array. */
+function poText(arr: any[]): string {
+  if (!Array.isArray(arr)) return '';
+  const t = arr.find((n: any) => n && '#text' in n);
+  return t ? String(t['#text']) : '';
+}
+
+/** Check if a formatting attribute (w:b, w:i, w:u, w:strike) is enabled, ignoring w:val="0" / "false" / "off". */
+function isToggleOn(rPr: any[], tag: string): boolean {
+  const node = poFind(rPr, tag);
+  if (!node) return false;
+  const val = poAttr(node, '@_w:val');
+  if (val === undefined || val === null) return true;
+  const v = String(val).toLowerCase();
+  return v !== '0' && v !== 'false' && v !== 'off' && v !== 'none';
+}
+
+/** Check if `tag` exists in children array. */
+function poHas(arr: any[], tag: string): boolean {
+  return poFind(arr, tag) !== undefined;
+}
+
+/** Navigate a dotted path: poNav(root, 'w:document', 'w:body') */
+function poNav(root: any[], ...path: string[]): any[] {
+  let current: any[] = root;
+  for (const tag of path) {
+    const found = poFind(current, tag);
+    if (!found) return [];
+    current = found[tag];
+    if (!Array.isArray(current)) return [];
+  }
+  return current;
+}
+
+// ────────────────────────────────────────────────────────────────────
+
 export class DocxParser {
   private xmlParser: XMLParser;
 
@@ -41,6 +99,8 @@ export class DocxParser {
       attributeNamePrefix: '@_',
       textNodeName: '#text',
       parseAttributeValue: false,
+      preserveOrder: true,
+      trimValues: false,
     });
   }
 
@@ -68,8 +128,8 @@ export class DocxParser {
     const docXmlText = await docXmlFile.async('string');
     const docParsed = this.xmlParser.parse(docXmlText);
 
-    const body = docParsed?.['w:document']?.['w:body'];
-    if (!body) {
+    const bodyChildren = poNav(docParsed, 'w:document', 'w:body');
+    if (bodyChildren.length === 0) {
       throw new Error('Struktur XML dokumen tidak valid.');
     }
 
@@ -86,42 +146,42 @@ export class DocxParser {
     let currentList: ListNode | null = null;
 
     // Helper to push nodes and handle list grouping
-    const pushNode = (node: ASTNode) => {
-      if (node.type === 'list') {
-        if (!currentList) {
-          currentList = node;
-          nodes.push(currentList);
-          stats.lists++;
-        } else if (currentList.ordered === node.ordered) {
-          currentList.items.push(...node.items);
+    const pushNode = (node: ASTNode | ASTNode[]) => {
+      const nodeList = Array.isArray(node) ? node : [node];
+      for (const n of nodeList) {
+        if (n.type === 'list') {
+          if (!currentList) {
+            currentList = n as ListNode;
+            nodes.push(currentList);
+            stats.lists++;
+          } else if (currentList.ordered === (n as ListNode).ordered) {
+            currentList.items.push(...(n as ListNode).items);
+          } else {
+            currentList = n as ListNode;
+            nodes.push(currentList);
+            stats.lists++;
+          }
         } else {
-          currentList = node;
-          nodes.push(currentList);
-          stats.lists++;
+          currentList = null;
+          nodes.push(n);
         }
-      } else {
-        currentList = null;
-        nodes.push(node);
       }
     };
 
-    const elements = Array.isArray(body['w:p'] || body['w:tbl'])
-      ? this.getOrderedElements(body)
-      : this.getOrderedElements(body);
-
-    for (let i = 0; i < elements.length; i++) {
-      const el = elements[i];
-      const tag = el._tag;
-
-      if (tag === 'w:p') {
-        const pNode = this.parseParagraph(el, stylesMap, relsMap, imagesMap, footnotesMap, stats);
+    // bodyChildren is already in document order thanks to preserveOrder
+    for (const el of bodyChildren) {
+      if ('w:p' in el) {
+        const pNode = this.parseParagraph(el['w:p'], poAttr(el, '@_w14:paraId'), stylesMap, relsMap, imagesMap, footnotesMap, stats);
         if (pNode) {
-          if (pNode.type === 'heading') stats.headings++;
-          if (pNode.type === 'paragraph') stats.paragraphs++;
-          pushNode(pNode);
+          const list = Array.isArray(pNode) ? pNode : [pNode];
+          for (const item of list) {
+            if (item.type === 'heading') stats.headings++;
+            if (item.type === 'paragraph') stats.paragraphs++;
+            pushNode(item);
+          }
         }
-      } else if (tag === 'w:tbl') {
-        const tblNode = this.parseTable(el, stylesMap, relsMap, imagesMap, footnotesMap, stats);
+      } else if ('w:tbl' in el) {
+        const tblNode = this.parseTable(el['w:tbl'], stylesMap, relsMap, imagesMap, footnotesMap, stats);
         if (tblNode) {
           stats.tables++;
           pushNode(tblNode);
@@ -140,21 +200,6 @@ export class DocxParser {
     };
   }
 
-  private getOrderedElements(body: any): any[] {
-    const result: any[] = [];
-    for (const key of Object.keys(body)) {
-      if (key === 'w:p' || key === 'w:tbl') {
-        const val = body[key];
-        if (Array.isArray(val)) {
-          val.forEach((item) => result.push({ ...item, _tag: key }));
-        } else if (val) {
-          result.push({ ...val, _tag: key });
-        }
-      }
-    }
-    return result;
-  }
-
   private async parseRelationships(zip: JSZip): Promise<Map<string, Relationship>> {
     const map = new Map<string, Relationship>();
     const relsFile = zip.file('word/_rels/document.xml.rels');
@@ -162,16 +207,15 @@ export class DocxParser {
 
     const xmlText = await relsFile.async('string');
     const parsed = this.xmlParser.parse(xmlText);
-    const rels = parsed?.['Relationships']?.['Relationship'];
+    const relsContainer = poNav(parsed, 'Relationships');
+    const relNodes = poAll(relsContainer, 'Relationship');
 
-    if (rels) {
-      const relList = Array.isArray(rels) ? rels : [rels];
-      for (const r of relList) {
-        map.set(r['@_Id'], {
-          id: r['@_Id'],
-          type: r['@_Type'],
-          target: r['@_Target'],
-        });
+    for (const r of relNodes) {
+      const id = poAttr(r, '@_Id');
+      const type = poAttr(r, '@_Type');
+      const target = poAttr(r, '@_Target');
+      if (id && type && target) {
+        map.set(id, { id, type, target });
       }
     }
     return map;
@@ -184,32 +228,34 @@ export class DocxParser {
 
     const xmlText = await stylesFile.async('string');
     const parsed = this.xmlParser.parse(xmlText);
-    const styles = parsed?.['w:styles']?.['w:style'];
+    const stylesContainer = poNav(parsed, 'w:styles');
+    const styleNodes = poAll(stylesContainer, 'w:style');
 
-    if (styles) {
-      const styleList = Array.isArray(styles) ? styles : [styles];
-      for (const s of styleList) {
-        const styleId = s['@_w:styleId'];
-        const nameVal = s['w:name']?.['@_w:val'] || styleId;
-        const nameLower = String(nameVal).toLowerCase();
+    for (const s of styleNodes) {
+      const styleId = poAttr(s, '@_w:styleId');
+      if (!styleId) continue;
 
-        let headingLevel: number | undefined;
-        if (nameLower.includes('heading 1') || styleId === 'Heading1') headingLevel = 1;
-        else if (nameLower.includes('heading 2') || styleId === 'Heading2') headingLevel = 2;
-        else if (nameLower.includes('heading 3') || styleId === 'Heading3') headingLevel = 3;
-        else if (nameLower.includes('heading 4') || styleId === 'Heading4') headingLevel = 4;
-        else if (nameLower.includes('heading 5') || styleId === 'Heading5') headingLevel = 5;
-        else if (nameLower.includes('heading 6') || styleId === 'Heading6') headingLevel = 6;
-        else if (nameLower === 'title') headingLevel = 1;
+      const children = s['w:style'] || [];
+      const nameNode = poFind(children, 'w:name');
+      const nameVal = nameNode ? poAttr(nameNode, '@_w:val') || styleId : styleId;
+      const nameLower = String(nameVal).toLowerCase();
 
-        map[styleId] = {
-          name: nameVal,
-          headingLevel,
-          isQuote: nameLower.includes('quote'),
-          isCode: nameLower.includes('code'),
-          isCaption: nameLower.includes('caption'),
-        };
-      }
+      let headingLevel: number | undefined;
+      if (nameLower.includes('heading 1') || styleId === 'Heading1') headingLevel = 1;
+      else if (nameLower.includes('heading 2') || styleId === 'Heading2') headingLevel = 2;
+      else if (nameLower.includes('heading 3') || styleId === 'Heading3') headingLevel = 3;
+      else if (nameLower.includes('heading 4') || styleId === 'Heading4') headingLevel = 4;
+      else if (nameLower.includes('heading 5') || styleId === 'Heading5') headingLevel = 5;
+      else if (nameLower.includes('heading 6') || styleId === 'Heading6') headingLevel = 6;
+      else if (nameLower === 'title') headingLevel = 1;
+
+      map[styleId] = {
+        name: nameVal,
+        headingLevel,
+        isQuote: nameLower.includes('quote'),
+        isCode: nameLower.includes('code'),
+        isCaption: nameLower.includes('caption'),
+      };
     }
     return map;
   }
@@ -257,212 +303,205 @@ export class DocxParser {
 
     const xmlText = await file.async('string');
     const parsed = this.xmlParser.parse(xmlText);
-    const fnList = parsed?.['w:footnotes']?.['w:footnote'];
+    const fnContainer = poNav(parsed, 'w:footnotes');
+    const fnNodes = poAll(fnContainer, 'w:footnote');
 
-    if (fnList) {
-      const list = Array.isArray(fnList) ? fnList : [fnList];
-      let numCounter = 1;
-      for (const fn of list) {
-        const id = fn['@_w:id'];
-        const fnType = fn['@_w:type'];
-        if (fnType === 'separator' || fnType === 'continuationSeparator') continue;
+    let numCounter = 1;
+    for (const fn of fnNodes) {
+      const id = poAttr(fn, '@_w:id');
+      const fnType = poAttr(fn, '@_w:type');
+      if (!id || fnType === 'separator' || fnType === 'continuationSeparator') continue;
 
-        const children: ASTNode[] = [];
-        const pList = fn['w:p'] ? (Array.isArray(fn['w:p']) ? fn['w:p'] : [fn['w:p']]) : [];
-        for (const p of pList) {
-          const parsedP = this.parseParagraph(p, stylesMap, new Map(), new Map(), new Map(), { hyperlinks: 0 });
-          if (parsedP) children.push(parsedP);
+      const fnChildren = fn['w:footnote'] || [];
+      const children: ASTNode[] = [];
+      const pNodes = poAll(fnChildren, 'w:p');
+
+      for (const p of pNodes) {
+        const parsedP = this.parseParagraph(p['w:p'], undefined, stylesMap, new Map(), new Map(), new Map(), { hyperlinks: 0 });
+        if (parsedP) {
+          if (Array.isArray(parsedP)) children.push(...parsedP);
+          else children.push(parsedP);
         }
-
-        map.set(id, {
-          type: 'footnote',
-          id,
-          number: numCounter++,
-          children,
-        });
       }
+
+      map.set(id, {
+        type: 'footnote',
+        id,
+        number: numCounter++,
+        children,
+      });
     }
     return map;
   }
 
   private parseParagraph(
-    pEl: any,
+    pChildren: any[], // the ordered children array of a w:p element
+    _paraId: string | undefined,
     stylesMap: StyleMap,
     relsMap: Map<string, Relationship>,
     imagesMap: Map<string, ImageNode>,
     footnotesMap: Map<string, FootnoteNode>,
     stats: { hyperlinks: number }
-  ): ASTNode | null {
-    const pPr = pEl['w:pPr'];
-    const styleId = pPr?.['w:pStyle']?.['@_w:val'];
+  ): ASTNode | ASTNode[] | null {
+    const pPrNode = poFind(pChildren, 'w:pPr');
+    const pPr = pPrNode ? pPrNode['w:pPr'] || [] : [];
+
+    const styleNode = poFind(pPr, 'w:pStyle');
+    const styleId = styleNode ? poAttr(styleNode, '@_w:val') : undefined;
     const styleInfo = styleId ? stylesMap[styleId] : undefined;
 
     // Check Page Break
-    if (pPr?.['w:pageBreakBefore']) {
+    if (poHas(pPr, 'w:pageBreakBefore')) {
       return { type: 'page_break', breakType: 'page' };
     }
 
     // Check Numbering (List Item)
-    const numPr = pPr?.['w:numPr'];
-    const ilvl = numPr?.['w:ilvl']?.['@_w:val'];
-    const numId = numPr?.['w:numId']?.['@_w:val'];
+    const numPrNode = poFind(pPr, 'w:numPr');
+    const numPrChildren = numPrNode ? numPrNode['w:numPr'] || [] : [];
+    const ilvlNode = poFind(numPrChildren, 'w:ilvl');
+    const numIdNode = poFind(numPrChildren, 'w:numId');
+    const ilvl = ilvlNode ? poAttr(ilvlNode, '@_w:val') : undefined;
+    const numId = numIdNode ? poAttr(numIdNode, '@_w:val') : undefined;
 
-    const inlines: InlineNode[] = [];
-    let embeddedImageId: string | null = null;
-    let drawingAltText: string | undefined;
+    const nodes: ASTNode[] = [];
+    let currentInlines: InlineNode[] = [];
 
-    // Process runs & drawing elements inside paragraph
-    const runs = pEl['w:r'] || pEl['w:hyperlink'] || pEl['w:drawing'] ? this.getParagraphChildren(pEl) : [];
-    for (const child of runs) {
-      if (child._tag === 'w:r') {
-        const res = this.parseRun(child, relsMap, footnotesMap, stats);
-        inlines.push(...res.inlines);
-        if (res.imageId) embeddedImageId = res.imageId;
-      } else if (child._tag === 'w:hyperlink') {
-        const rId = child['@_r:id'];
+    const flushInlines = () => {
+      if (currentInlines.length === 0) return;
+      const hasText = currentInlines.some((i) => (i.text && i.text.length > 0) || (i.children && i.children.length > 0));
+      if (!hasText) {
+        currentInlines = [];
+        return;
+      }
+
+      const rawText = currentInlines.map((i) => i.text || '').join('');
+
+      if (numId !== undefined) {
+        const level = ilvl ? parseInt(ilvl, 10) : 0;
+        const isChecklist = rawText.trim().startsWith('[x]') || rawText.trim().startsWith('[ ]');
+        let checked: boolean | undefined;
+        if (isChecklist) checked = rawText.trim().startsWith('[x]');
+
+        nodes.push({
+          type: 'list',
+          ordered: numId === '1' || numId === '2',
+          items: [{ type: 'list_item', level, checked, children: currentInlines }],
+        });
+      } else if (styleInfo?.headingLevel) {
+        nodes.push({ type: 'heading', level: styleInfo.headingLevel, children: currentInlines });
+      } else if (styleInfo?.isQuote) {
+        nodes.push({ type: 'quote', level: 1, children: [{ type: 'paragraph', children: currentInlines }] });
+      } else if (styleInfo?.isCode) {
+        nodes.push({ type: 'code_block', code: rawText });
+      } else {
+        nodes.push({ type: 'paragraph', style: styleInfo?.name, children: currentInlines });
+      }
+
+      currentInlines = [];
+    };
+
+    // Process children in document order — this is the key ordering fix
+    for (const child of pChildren) {
+      if ('w:r' in child) {
+        const res = this.parseRun(child['w:r'], relsMap, footnotesMap, stats);
+        if (res.imageId && imagesMap.has(res.imageId)) {
+          flushInlines();
+          const imgNode = imagesMap.get(res.imageId)!;
+          nodes.push(imgNode);
+        } else {
+          currentInlines.push(...res.inlines);
+        }
+      } else if ('w:hyperlink' in child) {
+        const hlChildren = child['w:hyperlink'] || [];
+        const rId = poAttr(child, '@_r:id');
         const rel = rId ? relsMap.get(rId) : undefined;
         const url = rel?.target || '#';
         stats.hyperlinks++;
 
-        const innerRuns = child['w:r'] ? (Array.isArray(child['w:r']) ? child['w:r'] : [child['w:r']]) : [];
         const linkInlines: InlineNode[] = [];
+        const innerRuns = poAll(hlChildren, 'w:r');
         for (const ir of innerRuns) {
-          const res = this.parseRun(ir, relsMap, footnotesMap, stats);
+          const res = this.parseRun(ir['w:r'], relsMap, footnotesMap, stats);
           linkInlines.push(...res.inlines);
         }
 
         const linkText = linkInlines.map((i) => i.text || '').join('');
-        inlines.push({
+        currentInlines.push({
           type: 'link',
           text: linkText,
           url,
           children: linkInlines,
         });
-      } else if (child._tag === 'w:drawing') {
-        const imgInfo = this.extractDrawingImage(child);
-        if (imgInfo) {
-          embeddedImageId = imgInfo.rId;
-          drawingAltText = imgInfo.altText;
+      } else if ('w:drawing' in child) {
+        const imgInfo = this.extractDrawingImage(child['w:drawing']);
+        if (imgInfo && imagesMap.has(imgInfo.rId)) {
+          flushInlines();
+          const imgNode = imagesMap.get(imgInfo.rId)!;
+          if (imgInfo.altText && !imgNode.altText) imgNode.altText = imgInfo.altText;
+          nodes.push(imgNode);
+        }
+      } else if ('w:footnoteReference' in child) {
+        const fnId = poAttr(child, '@_w:id') || poAttr(child, '@_w:val');
+        if (fnId && footnotesMap.has(fnId)) {
+          const fn = footnotesMap.get(fnId)!;
+          currentInlines.push({ type: 'text', text: `[^${fn.number}]` });
         }
       }
     }
 
-    // If paragraph contains a drawing/image, return ImageNode
-    if (embeddedImageId && imagesMap.has(embeddedImageId)) {
-      const imgNode = imagesMap.get(embeddedImageId)!;
-      if (drawingAltText && !imgNode.altText) {
-        imgNode.altText = drawingAltText;
-      }
-      return imgNode;
-    }
+    flushInlines();
 
-    const rawText = inlines.map((i) => i.text || '').join('').trim();
-    if (!rawText && inlines.length === 0) return null;
-
-    // Check list
-    if (numId !== undefined) {
-      const level = ilvl ? parseInt(ilvl, 10) : 0;
-      const isChecklist = rawText.startsWith('[x]') || rawText.startsWith('[ ]');
-      let checked: boolean | undefined;
-      let cleanInlines = inlines;
-
-      if (isChecklist) {
-        checked = rawText.startsWith('[x]');
-      }
-
-      return {
-        type: 'list',
-        ordered: numId === '1' || numId === '2', // Basic heuristic for ordered list
-        items: [
-          {
-            type: 'list_item',
-            level,
-            checked,
-            children: cleanInlines,
-          },
-        ],
-      };
-    }
-
-    // Check heading
-    if (styleInfo?.headingLevel) {
-      return {
-        type: 'heading',
-        level: styleInfo.headingLevel,
-        children: inlines,
-      };
-    }
-
-    // Check quote
-    if (styleInfo?.isQuote) {
-      return {
-        type: 'quote',
-        level: 1,
-        children: [
-          {
-            type: 'paragraph',
-            children: inlines,
-          },
-        ],
-      };
-    }
-
-    // Check code block
-    if (styleInfo?.isCode) {
-      return {
-        type: 'code_block',
-        code: rawText,
-      };
-    }
-
-    return {
-      type: 'paragraph',
-      style: styleInfo?.name,
-      children: inlines,
-    };
-  }
-
-  private getParagraphChildren(pEl: any): any[] {
-    const res: any[] = [];
-    for (const key of Object.keys(pEl)) {
-      if (key === 'w:r' || key === 'w:hyperlink' || key === 'w:drawing') {
-        const val = pEl[key];
-        if (Array.isArray(val)) {
-          val.forEach((item) => res.push({ ...item, _tag: key }));
-        } else if (val) {
-          res.push({ ...val, _tag: key });
-        }
-      }
-    }
-    return res;
+    if (nodes.length === 0) return null;
+    if (nodes.length === 1) return nodes[0];
+    return nodes;
   }
 
   private parseRun(
-    rEl: any,
+    rChildren: any[], // ordered children of a w:r element
     relsMap: Map<string, Relationship>,
     footnotesMap: Map<string, FootnoteNode>,
     stats: { hyperlinks: number }
   ): { inlines: InlineNode[]; imageId?: string } {
-    const rPr = rEl['w:rPr'];
-    const isBold = !!rPr?.['w:b'];
-    const isItalic = !!rPr?.['w:i'];
-    const isStrike = !!rPr?.['w:strike'];
-    const isCode = rPr?.['w:rStyle']?.['@_w:val']?.toLowerCase().includes('code');
-    const vertAlign = rPr?.['w:vertAlign']?.['@_w:val'];
+    const rPrNode = poFind(rChildren, 'w:rPr');
+    const rPr = rPrNode ? rPrNode['w:rPr'] || [] : [];
+
+    const isBold = isToggleOn(rPr, 'w:b');
+    const isItalic = isToggleOn(rPr, 'w:i');
+    const isStrike = isToggleOn(rPr, 'w:strike');
+    const isUnderline = isToggleOn(rPr, 'w:u');
+    const rStyleNode = poFind(rPr, 'w:rStyle');
+    const isCode = rStyleNode ? (poAttr(rStyleNode, '@_w:val') || '').toLowerCase().includes('code') : false;
+    const vertAlignNode = poFind(rPr, 'w:vertAlign');
+    const vertAlign = vertAlignNode ? poAttr(vertAlignNode, '@_w:val') : undefined;
 
     // Check for drawings in run
-    if (rEl['w:drawing']) {
-      const imgInfo = this.extractDrawingImage(rEl['w:drawing']);
+    const drawingNode = poFind(rChildren, 'w:drawing');
+    if (drawingNode) {
+      const imgInfo = this.extractDrawingImage(drawingNode['w:drawing']);
       if (imgInfo) {
         return { inlines: [], imageId: imgInfo.rId };
       }
     }
 
-    // Check text
+    // Check text, breaks, tabs, and footnote references in order
     let text = '';
-    const tVal = rEl['w:t'];
-    if (typeof tVal === 'string') text = tVal;
-    else if (tVal?.['#text']) text = tVal['#text'];
+    for (const child of rChildren) {
+      if ('w:t' in child) {
+        const tVal = child['w:t'];
+        if (Array.isArray(tVal)) text += poText(tVal);
+        else if (typeof tVal === 'string') text += tVal;
+      } else if ('w:br' in child || 'w:cr' in child) {
+        text += '\n';
+      } else if ('w:tab' in child) {
+        text += '\t';
+      } else if ('w:footnoteReference' in child) {
+        const fnId = poAttr(child, '@_w:id') || poAttr(child, '@_w:val');
+        if (fnId && footnotesMap.has(fnId)) {
+          const fn = footnotesMap.get(fnId)!;
+          text += `[^${fn.number}]`;
+        }
+      }
+    }
 
     if (!text) return { inlines: [] };
 
@@ -473,25 +512,32 @@ export class DocxParser {
     else if (isBold) node = { type: 'bold', text };
     else if (isItalic) node = { type: 'italic', text };
     else if (isStrike) node = { type: 'strikethrough', text };
+    else if (isUnderline) node = { type: 'underline', text };
     else if (vertAlign === 'superscript') node = { type: 'superscript', text };
     else if (vertAlign === 'subscript') node = { type: 'subscript', text };
 
     return { inlines: [node] };
   }
 
-  private extractDrawingImage(drawingEl: any): { rId: string; altText?: string } | null {
+  private extractDrawingImage(drawingChildren: any[]): { rId: string; altText?: string } | null {
     try {
-      const inlineOrAnchor = drawingEl['wp:inline'] || drawingEl['wp:anchor'];
-      if (!inlineOrAnchor) return null;
+      const inlineNode = poFind(drawingChildren, 'wp:inline');
+      const anchorNode = poFind(drawingChildren, 'wp:anchor');
+      const containerNode = inlineNode || anchorNode;
+      if (!containerNode) return null;
 
-      const docPr = inlineOrAnchor['wp:docPr'];
-      const altText = docPr?.['@_descr'] || docPr?.['@_title'] || docPr?.['@_name'];
+      const containerTag = inlineNode ? 'wp:inline' : 'wp:anchor';
+      const containerChildren = containerNode[containerTag] || [];
 
-      const graphic = inlineOrAnchor['a:graphic'];
-      const graphicData = graphic?.['a:graphicData'];
-      const blip = graphicData?.['pic:pic']?.['pic:blipFill']?.['a:blip'];
+      const docPrNode = poFind(containerChildren, 'wp:docPr');
+      const altText = docPrNode
+        ? poAttr(docPrNode, '@_descr') || poAttr(docPrNode, '@_title') || poAttr(docPrNode, '@_name')
+        : undefined;
 
-      const rId = blip?.['@_r:embed'];
+      const graphicChildren = poNav(containerChildren, 'a:graphic', 'a:graphicData', 'pic:pic', 'pic:blipFill');
+      const blipNode = poFind(graphicChildren, 'a:blip');
+      const rId = blipNode ? poAttr(blipNode, '@_r:embed') : undefined;
+
       if (rId) {
         return { rId, altText };
       }
@@ -502,38 +548,46 @@ export class DocxParser {
   }
 
   private parseTable(
-    tblEl: any,
+    tblChildren: any[], // ordered children of a w:tbl element
     stylesMap: StyleMap,
     relsMap: Map<string, Relationship>,
     imagesMap: Map<string, ImageNode>,
     footnotesMap: Map<string, FootnoteNode>,
     stats: { hyperlinks: number }
   ): TableNode | null {
-    const trList = tblEl['w:tr'] ? (Array.isArray(tblEl['w:tr']) ? tblEl['w:tr'] : [tblEl['w:tr']]) : [];
-    if (trList.length === 0) return null;
+    const trNodes = poAll(tblChildren, 'w:tr');
+    if (trNodes.length === 0) return null;
 
     let isComplex = false;
     const rows: TableRowNode[] = [];
 
-    trList.forEach((tr: any, rIdx: number) => {
-      const tcList = tr['w:tc'] ? (Array.isArray(tr['w:tc']) ? tr['w:tc'] : [tr['w:tc']]) : [];
+    trNodes.forEach((trNode: any, rIdx: number) => {
+      const trChildren = trNode['w:tr'] || [];
+      const tcNodes = poAll(trChildren, 'w:tc');
       const cells: TableCellNode[] = [];
 
-      tcList.forEach((tc: any) => {
-        const tcPr = tc['w:tcPr'];
-        const gridSpan = tcPr?.['w:gridSpan']?.['@_w:val'];
-        const vMerge = tcPr?.['w:vMerge'];
+      tcNodes.forEach((tcNode: any) => {
+        const tcChildren = tcNode['w:tc'] || [];
+        const tcPrNode = poFind(tcChildren, 'w:tcPr');
+        const tcPr = tcPrNode ? tcPrNode['w:tcPr'] || [] : [];
+
+        const gridSpanNode = poFind(tcPr, 'w:gridSpan');
+        const gridSpan = gridSpanNode ? poAttr(gridSpanNode, '@_w:val') : undefined;
+        const vMerge = poHas(tcPr, 'w:vMerge');
 
         const colSpan = gridSpan ? parseInt(gridSpan, 10) : 1;
         if (colSpan > 1 || vMerge) isComplex = true;
 
         const cellInlines: InlineNode[] = [];
-        const pList = tc['w:p'] ? (Array.isArray(tc['w:p']) ? tc['w:p'] : [tc['w:p']]) : [];
+        const pNodes = poAll(tcChildren, 'w:p');
 
-        for (const p of pList) {
-          const parsedP = this.parseParagraph(p, stylesMap, relsMap, imagesMap, footnotesMap, stats);
-          if (parsedP && 'children' in parsedP && Array.isArray(parsedP.children)) {
-            cellInlines.push(...(parsedP.children as InlineNode[]));
+        for (const p of pNodes) {
+          const parsedP = this.parseParagraph(p['w:p'], undefined, stylesMap, relsMap, imagesMap, footnotesMap, stats);
+          const pList = Array.isArray(parsedP) ? parsedP : [parsedP];
+          for (const item of pList) {
+            if (item && 'children' in item && Array.isArray(item.children)) {
+              cellInlines.push(...(item.children as InlineNode[]));
+            }
           }
         }
 

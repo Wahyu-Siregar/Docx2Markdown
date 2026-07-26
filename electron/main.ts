@@ -17,7 +17,7 @@ function createWindow() {
     title: 'Docx2Markdown',
     backgroundColor: '#020617',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -56,7 +56,7 @@ ipcMain.handle('dialog:openFile', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
     filters: [
-      { name: 'Word Documents', extensions: ['docx', 'doc'] },
+      { name: 'Word Documents', extensions: ['docx'] },
     ],
   });
 
@@ -120,13 +120,13 @@ ipcMain.handle('file:saveBinary', async (_, { defaultName, buffer, filters }) =>
   return result.filePath;
 });
 
-ipcMain.handle('file:exportFolderPackage', async (_, { targetFolder, markdownName, markdownContent, images, report }) => {
+ipcMain.handle('file:exportFolderPackage', async (_, { targetFolder, markdownName, markdownContent, images, imageFolder, report }) => {
   try {
     const mdPath = path.join(targetFolder, markdownName);
     await fs.writeFile(mdPath, markdownContent, 'utf-8');
 
     if (images && images.length > 0) {
-      const imgDir = path.join(targetFolder, 'images');
+      const imgDir = path.join(targetFolder, imageFolder || 'images');
       await fs.mkdir(imgDir, { recursive: true });
 
       for (const img of images) {

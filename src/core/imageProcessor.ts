@@ -1,5 +1,5 @@
-import { ImageNode } from '../types/ast';
-import { ConversionConfig } from '../types/config';
+import type { ImageNode } from '../types/ast.ts';
+import type { ConversionConfig } from '../types/config.ts';
 
 export interface ProcessedImageResult {
   node: ImageNode;

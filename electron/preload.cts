@@ -18,6 +18,7 @@ export interface Docx2MdAPI {
     markdownName: string;
     markdownContent: string;
     images?: Array<{ filename: string; buffer: number[] }>;
+    imageFolder?: string;
     report?: any;
   }) => Promise<string>;
   openFolder: (path: string) => Promise<void>;

@@ -35,7 +35,8 @@
     "build": "tsc && vite build && tsc -p tsconfig.electron.json",
     "dist": "npm run build && electron-builder --win nsis portable",
     "lint": "tsc --noEmit",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --experimental-strip-types --no-warnings --test test/unit/*.ts"
   },
   "build": {
     "appId": "com.wahyusiregar.docx2markdown",

@@ -136,20 +136,8 @@ export const AdvancedOptionsDrawer: React.FC<AdvancedOptionsProps> = ({
               />
             </div>
 
-            {/* Markdown Dialect */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1">
-                Sintaks Markdown (Dialect)
-              </label>
-              <select
-                value={config.dialect}
-                onChange={(e) => update('dialect', e.target.value as any)}
-                className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-white focus:outline-none focus:border-brand-500"
-              >
-                <option value="gfm">GitHub Flavored Markdown (GFM)</option>
-                <option value="commonmark">CommonMark Standard</option>
-              </select>
-            </div>
+
+
 
             {/* Page Break Mode */}
             <div>

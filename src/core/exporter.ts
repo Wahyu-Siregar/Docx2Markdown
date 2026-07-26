@@ -1,11 +1,12 @@
 import JSZip from 'jszip';
-import { ProcessedImageResult } from './imageProcessor';
+import type { ProcessedImageResult } from './imageProcessor.ts';
 
 export class Exporter {
   public static async createZipPackage(
     markdownName: string,
     markdownContent: string,
     images: Map<string, ProcessedImageResult>,
+    imageFolder: string = 'images',
     report?: any
   ): Promise<Uint8Array> {
     const zip = new JSZip();
@@ -16,7 +17,7 @@ export class Exporter {
     rootFolder.file(markdownName, markdownContent);
 
     // 2. Add Images if present
-    const imgFolder = rootFolder.folder('images');
+    const imgFolder = rootFolder.folder(imageFolder);
     for (const [_, res] of images.entries()) {
       if (res.buffer && res.filename && imgFolder) {
         imgFolder.file(res.filename, res.buffer);

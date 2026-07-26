@@ -232,7 +232,8 @@ export const App: React.FC = () => {
           markdownName,
           markdownContent: content,
           images: imagesList,
-          report: reportData,
+          imageFolder: config.imageDirectory || 'images',
+          report: config.includeConversionReport ? reportData : undefined,
         });
 
         alert(`Paket folder berhasil disimpan di:\n${target}`);
@@ -260,6 +261,7 @@ export const App: React.FC = () => {
       markdownName,
       content,
       processedImages,
+      config.imageDirectory || 'images',
       config.includeConversionReport ? reportData : undefined
     );
 

@@ -30,10 +30,10 @@ export const DropZone: React.FC<DropZoneProps> = ({ onFileSelect, onNativeOpen }
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
       const file = files[0];
-      if (file.name.endsWith('.docx') || file.name.endsWith('.doc')) {
+      if (file.name.endsWith('.docx')) {
         onFileSelect(file);
       } else {
-        alert('Format file tidak didukung. Silakan pilih file .docx atau .doc.');
+        alert('Format file tidak didukung. Silakan pilih file .docx.');
       }
     }
   };
@@ -65,7 +65,7 @@ export const DropZone: React.FC<DropZoneProps> = ({ onFileSelect, onNativeOpen }
       <input
         ref={inputRef}
         type="file"
-        accept=".docx,.doc"
+        accept=".docx"
         className="hidden"
         onChange={handleInputChange}
       />
@@ -78,7 +78,7 @@ export const DropZone: React.FC<DropZoneProps> = ({ onFileSelect, onNativeOpen }
         Seret & Lepas file Word di sini
       </h3>
       <p className="text-sm text-slate-400 mb-6 max-w-md">
-        Atau klik untuk memilih dokumen Word (<span className="text-slate-300 font-mono">.docx</span> / <span className="text-slate-300 font-mono">.doc</span>) dari perangkat Anda.
+        Atau klik untuk memilih dokumen Word (<span className="text-slate-300 font-mono">.docx</span>) dari perangkat Anda.
       </p>
 
       <div className="flex flex-wrap items-center justify-center gap-3">

@@ -1,4 +1,4 @@
-import {
+import type {
   DocumentAST,
   ASTNode,
   HeadingNode,
@@ -13,9 +13,9 @@ import {
   CodeBlockNode,
   FootnoteNode,
   ConversionWarning,
-} from '../types/ast';
-import { ConversionConfig } from '../types/config';
-import { ProcessedImageResult } from './imageProcessor';
+} from '../types/ast.ts';
+import type { ConversionConfig } from '../types/config.ts';
+import type { ProcessedImageResult } from './imageProcessor.ts';
 
 export interface RenderResult {
   markdown: string;
@@ -155,24 +155,50 @@ export class MarkdownRenderer {
     return MarkdownRenderer.renderInlines(node.children);
   }
 
+  private static escapeText(str: string): string {
+    if (!str) return '';
+    return str.replace(/(\[\^\d+\])|([\\*_~[\]#>`])/g, (match, fnRef, charToEscape) => {
+      if (fnRef) return fnRef;
+      return '\\' + charToEscape;
+    });
+  }
+
   private static renderInlines(inlines: InlineNode[]): string {
     return inlines
       .map((item) => {
-        if (item.type === 'text') return item.text || '';
+        if (item.type === 'text') return MarkdownRenderer.escapeText(item.text || '');
         if (item.type === 'bold') {
-          const content = item.children ? MarkdownRenderer.renderInlines(item.children) : item.text;
+          const content = item.children ? MarkdownRenderer.renderInlines(item.children) : MarkdownRenderer.escapeText(item.text || '');
           return `**${content}**`;
         }
         if (item.type === 'italic') {
-          const content = item.children ? MarkdownRenderer.renderInlines(item.children) : item.text;
+          const content = item.children ? MarkdownRenderer.renderInlines(item.children) : MarkdownRenderer.escapeText(item.text || '');
           return `*${content}*`;
         }
-        if (item.type === 'strikethrough') return `~~${item.text}~~`;
-        if (item.type === 'code') return `\`${item.text}\``;
-        if (item.type === 'subscript') return `<sub>${item.text}</sub>`;
-        if (item.type === 'superscript') return `<sup>${item.text}</sup>`;
-        if (item.type === 'link') return `[${item.text}](${item.url})`;
-        return item.text || '';
+        if (item.type === 'strikethrough') {
+          const content = item.children ? MarkdownRenderer.renderInlines(item.children) : MarkdownRenderer.escapeText(item.text || '');
+          return `~~${content}~~`;
+        }
+        if (item.type === 'underline') {
+          const content = item.children ? MarkdownRenderer.renderInlines(item.children) : MarkdownRenderer.escapeText(item.text || '');
+          return `<u>${content}</u>`;
+        }
+        if (item.type === 'code') {
+          const text = item.text || '';
+          const maxBackticks = (text.match(/`+/g) || []).reduce((max, cur) => Math.max(max, cur.length), 0);
+          const fence = '`'.repeat(maxBackticks + 1);
+          const padding = text.startsWith('`') || text.endsWith('`') ? ' ' : '';
+          return `${fence}${padding}${text}${padding}${fence}`;
+        }
+        if (item.type === 'subscript') return `<sub>${MarkdownRenderer.escapeText(item.text || '')}</sub>`;
+        if (item.type === 'superscript') return `<sup>${MarkdownRenderer.escapeText(item.text || '')}</sup>`;
+        if (item.type === 'link') {
+          const content = item.children && item.children.length > 0
+            ? MarkdownRenderer.renderInlines(item.children)
+            : MarkdownRenderer.escapeText(item.text || '');
+          return `[${content}](${item.url})`;
+        }
+        return MarkdownRenderer.escapeText(item.text || '');
       })
       .join('');
   }
@@ -204,26 +230,44 @@ export class MarkdownRenderer {
       return MarkdownRenderer.renderHtmlTable(node);
     }
 
-    const rows: string[] = [];
     const allRows = [node.headers, ...node.rows].filter(Boolean) as TableRowNode[];
     if (allRows.length === 0) return '';
 
-    // Render Headers
-    const headerRow = allRows[0];
-    const headerCells = headerRow.cells.map((c) =>
-      MarkdownRenderer.renderInlines(c.children).replace(/\|/g, '\\|')
-    );
+    // Expand colSpan: a cell with colSpan N becomes N cells (original + N-1 empty)
+    const expandRow = (row: TableRowNode): string[] => {
+      const cells: string[] = [];
+      for (const c of row.cells) {
+        cells.push(MarkdownRenderer.renderInlines(c.children).replace(/\|/g, '\\|'));
+        const span = (c.colSpan && c.colSpan > 1) ? c.colSpan - 1 : 0;
+        for (let s = 0; s < span; s++) cells.push('');
+      }
+      return cells;
+    };
+
+    const expanded = allRows.map(expandRow);
+    // Determine column count from the widest row
+    const colCount = Math.max(...expanded.map((r) => r.length));
+
+    // Pad short rows, trim long rows
+    const normalize = (cells: string[]): string[] => {
+      if (cells.length < colCount) return [...cells, ...Array(colCount - cells.length).fill('')];
+      return cells.slice(0, colCount);
+    };
+
+    if (node.isComplex) {
+      warnings.push({
+        code: 'COMPLEX_TABLE_TEXT_FALLBACK',
+        message: 'Tabel memiliki merged cells yang diratakan (flattened) ke pipe table biasa. Informasi merge hilang.',
+      });
+    }
+
+    const rows: string[] = [];
+    const headerCells = normalize(expanded[0]);
     rows.push(`| ${headerCells.join(' | ')} |`);
+    rows.push(`| ${headerCells.map(() => '---').join(' | ')} |`);
 
-    // Render Separator
-    const sep = headerCells.map(() => '---');
-    rows.push(`| ${sep.join(' | ')} |`);
-
-    // Render Data Rows
-    for (let i = 1; i < allRows.length; i++) {
-      const dataCells = allRows[i].cells.map((c) =>
-        MarkdownRenderer.renderInlines(c.children).replace(/\|/g, '\\|')
-      );
+    for (let i = 1; i < expanded.length; i++) {
+      const dataCells = normalize(expanded[i]);
       rows.push(`| ${dataCells.join(' | ')} |`);
     }
 
@@ -267,6 +311,8 @@ export class MarkdownRenderer {
 
   private static renderCodeBlock(node: CodeBlockNode): string {
     const lang = node.language || '';
-    return `\`\`\`${lang}\n${node.code}\n\`\`\``;
+    const maxBackticks = (node.code.match(/`+/g) || []).reduce((max, cur) => Math.max(max, cur.length), 0);
+    const fence = '`'.repeat(Math.max(3, maxBackticks + 1));
+    return `${fence}${lang}\n${node.code}\n${fence}`;
   }
 }

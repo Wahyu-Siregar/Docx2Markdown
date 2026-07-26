@@ -99,7 +99,7 @@ File installer Windows siap pakai tersedia pada folder `release/`:
 Docx2Markdown/
 ├── electron/                  # Process Electron main & preload IPC
 │   ├── main.ts                # Main process (Native Window, IPC, Filesystem)
-│   └── preload.ts             # Preload context bridge (window.docx2mdApi)
+│   └── preload.cts            # Preload context bridge (window.docx2mdApi)
 ├── public/                    # Aset Publik & Logo Vector SVG / PNG
 │   ├── favicon.svg            # Favicon browser & app icon
 │   ├── icon.svg               # Vector SVG logo utama

@@ -26,3 +26,9 @@ Thumbs.db
 
 # Local PRD Document
 Prd_Docx2Markdown.md
+
+# Local Graphify outputs
+graphify-out/
+
+# Local diagnostic output
+node_help.txt
