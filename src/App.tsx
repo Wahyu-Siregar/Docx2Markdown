@@ -32,7 +32,24 @@ export const App: React.FC = () => {
     buffer: ArrayBuffer;
   } | null>(null);
 
-  const [config, setConfig] = useState<ConversionConfig>(DEFAULT_CONFIG);
+  const [config, setConfig] = useState<ConversionConfig>(() => {
+    try {
+      const saved = localStorage.getItem('docx2md_config');
+      if (saved) return { ...DEFAULT_CONFIG, ...JSON.parse(saved) };
+    } catch {
+      // Fallback
+    }
+    return DEFAULT_CONFIG;
+  });
+
+  const handleUpdateConfig = (newConfig: ConversionConfig) => {
+    setConfig(newConfig);
+    try {
+      localStorage.setItem('docx2md_config', JSON.stringify(newConfig));
+    } catch {
+      // Ignore
+    }
+  };
   const [ast, setAst] = useState<DocumentAST | null>(null);
   const [isParsing, setIsParsing] = useState(false);
 
@@ -314,11 +331,11 @@ export const App: React.FC = () => {
               <>
                 <ImageModeSelector
                   currentMode={config.imageMode}
-                  onSelectMode={(mode) => setConfig({ ...config, imageMode: mode })}
+                  onSelectMode={(mode) => handleUpdateConfig({ ...config, imageMode: mode })}
                   imageCount={ast?.statistics.images || 0}
                 />
 
-                <AdvancedOptionsDrawer config={config} onChangeConfig={setConfig} />
+                <AdvancedOptionsDrawer config={config} onChangeConfig={handleUpdateConfig} />
 
                 <div className="flex justify-end pt-4">
                   <button

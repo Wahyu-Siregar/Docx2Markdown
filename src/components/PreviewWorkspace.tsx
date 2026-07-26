@@ -14,6 +14,8 @@ import {
   FileCheck,
   AlertTriangle,
   RotateCcw,
+  Search,
+  X,
 } from 'lucide-react';
 import { ConversionWarning } from '../types/ast';
 
@@ -40,6 +42,10 @@ export const PreviewWorkspace: React.FC<PreviewWorkspaceProps> = ({
   const [viewMode, setViewMode] = useState<'split' | 'source' | 'preview'>('split');
   const [copied, setCopied] = useState(false);
 
+  // Search feature (FR-039)
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showSearch, setShowSearch] = useState(false);
+
   const handleCopy = () => {
     navigator.clipboard.writeText(markdown);
     setCopied(true);
@@ -49,6 +55,10 @@ export const PreviewWorkspace: React.FC<PreviewWorkspaceProps> = ({
   const handleResetMarkdown = () => {
     setMarkdown(initialMarkdown);
   };
+
+  const matchCount = searchQuery.trim()
+    ? (markdown.match(new RegExp(searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')) || []).length
+    : 0;
 
   return (
     <div className="w-full h-[calc(100vh-140px)] flex flex-col glass-panel rounded-2xl border border-slate-800 shadow-2xl overflow-hidden">
@@ -85,6 +95,19 @@ export const PreviewWorkspace: React.FC<PreviewWorkspaceProps> = ({
               <span>Rendered Preview</span>
             </button>
           </div>
+
+          {/* Search Button (FR-039) */}
+          <button
+            onClick={() => setShowSearch(!showSearch)}
+            className={`p-2 rounded-xl border text-xs font-medium transition-colors ${
+              showSearch
+                ? 'bg-brand-500/20 text-brand-300 border-brand-500/30'
+                : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+            }`}
+            title="Cari teks di preview (FR-039)"
+          >
+            <Search className="w-3.5 h-3.5" />
+          </button>
 
           {markdown !== initialMarkdown && (
             <button
@@ -153,6 +176,29 @@ export const PreviewWorkspace: React.FC<PreviewWorkspaceProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Search Input Bar (FR-039) */}
+      {showSearch && (
+        <div className="px-5 py-2 bg-slate-950/90 border-b border-slate-800 flex items-center gap-3">
+          <Search className="w-4 h-4 text-slate-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Cari kata atau frase di dalam Markdown..."
+            className="flex-1 bg-transparent text-xs text-white focus:outline-none"
+            autoFocus
+          />
+          {searchQuery && (
+            <span className="text-xs text-slate-400 font-mono">
+              {matchCount} hasil ditemukan
+            </span>
+          )}
+          <button onClick={() => setShowSearch(false)} className="text-slate-400 hover:text-white">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Main Workspace Area */}
       <div className="flex-1 grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-800 overflow-hidden">
