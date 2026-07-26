@@ -3,6 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "description": "Local-first desktop application to convert Microsoft Word (.docx) documents into clean Markdown.",
+  "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
