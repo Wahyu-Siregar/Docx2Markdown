@@ -2,9 +2,34 @@
   "name": "docx2markdown",
   "private": true,
   "version": "1.0.0",
-  "description": "Local-first desktop application to convert Microsoft Word (.docx) documents into clean Markdown.",
+  "description": "Local-first desktop application to convert Microsoft Word (.docx) documents into clean GitHub Flavored Markdown (GFM) with rich image handling, live split-view preview, and 100% local privacy.",
   "type": "module",
   "main": "dist-electron/main.js",
+  "homepage": "https://github.com/Wahyu-Siregar/Docx2Markdown#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Wahyu-Siregar/Docx2Markdown.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Wahyu-Siregar/Docx2Markdown/issues"
+  },
+  "keywords": [
+    "docx-to-markdown",
+    "word-to-markdown",
+    "docx2md",
+    "word2md",
+    "markdown-converter",
+    "electron",
+    "react",
+    "typescript",
+    "gfm",
+    "local-first",
+    "obsidian",
+    "privacy-first",
+    "desktop-app"
+  ],
+  "author": "Wahyu Siregar",
+  "license": "MIT",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && tsc -p tsconfig.electron.json",
