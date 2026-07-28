@@ -32,3 +32,6 @@ graphify-out/
 
 # Local diagnostic output
 node_help.txt
+
+# Local Git worktrees
+.worktrees/
